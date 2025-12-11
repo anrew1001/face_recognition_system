@@ -6,6 +6,7 @@ from .types import EmbeddingResult, FaceDetection, ModelInfo
 
 # Import adapters to trigger registration
 from . import scrfd_adapter  # noqa: F401
+from . import insightface_adapter  # noqa: F401
 
 __all__ = [
     "RecognitionModel",

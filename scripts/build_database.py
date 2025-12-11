@@ -53,7 +53,7 @@ def build_from_known(known_dir: str, output_path: str):
                     bbox=(x1, y1, x2, y2),
                     confidence=float(face.det_score)
                 ),
-                model_fingerprint="insightface:buffalo_l:512"
+                model_fingerprint="212a5ec8dbd9c95e"
             )
 
             db.add_embedding_result(name, result)

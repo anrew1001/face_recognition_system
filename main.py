@@ -110,89 +110,89 @@ class FaceRecognitionPipeline:
                     x1, y1, x2, y2 = detection.bbox
 
                     # 2. Liveness Check
-                    try:
-                        is_alive = self.blink_detector.detect(detection)
-                        liveness_color = self.COLOR_MATCH if is_alive else self.COLOR_DEAD
-                        liveness_text = "LIVE" if is_alive else "DEAD"
-                    except ValueError:
-                        # No landmarks available for liveness check
-                        is_alive = False
-                        liveness_color = self.COLOR_UNKNOWN
-                        liveness_text = "NO_LANDMARKS"
-
-                    # Draw bounding box
-                    cv2.rectangle(
-                        frame,
-                        (x1, y1),
-                        (x2, y2),
-                        liveness_color,
-                        self.THICKNESS,
-                    )
+                    # try:
+                    #     is_alive = self.blink_detector.detect(detection)
+                    #     liveness_color = self.COLOR_MATCH if is_alive else self.COLOR_DEAD
+                    #     liveness_text = "LIVE" if is_alive else "DEAD"
+                    # except ValueError:
+                    #     # No landmarks available for liveness check
+                    #     is_alive = False
+                    #     liveness_color = self.COLOR_UNKNOWN
+                    #     liveness_text = "NO_LANDMARKS"
+                    #
+                    # # Draw bounding box
+                    # cv2.rectangle(
+                    #     frame,
+                    #     (x1, y1),
+                    #     (x2, y2),
+                    #     liveness_color,
+                    #     self.THICKNESS,
+                    # )
 
                     # 3. Extract Embedding (only if alive or no landmarks)
-                    embedding_result = None
-                    if is_alive or liveness_text == "NO_LANDMARKS":
-                        embedding_result = self.model.extract_embedding(frame, detection)
+                    # embedding_result = None
+                    # if is_alive or liveness_text == "NO_LANDMARKS":
+                    #     embedding_result = self.model.extract_embedding(frame, detection)
 
                     # 4. Match with Database
-                    match_text = "UNKNOWN"
-                    match_color = self.COLOR_UNKNOWN
-
-                    if embedding_result and self.db.list_identities():
-                        match = self.db.find_match(
-                            embedding_result.embedding,
-                            threshold=self.similarity_threshold,
-                            model_fingerprint=embedding_result.model_fingerprint,
-                        )
-                        if match:
-                            name, score = match
-                            match_text = f"{name} ({score:.3f})"
-                            match_color = self.COLOR_MATCH
+                    # match_text = "UNKNOWN"
+                    # match_color = self.COLOR_UNKNOWN
+                    #
+                    # if embedding_result and self.db.list_identities():
+                    #     match = self.db.find_match(
+                    #         embedding_result.embedding,
+                    #         threshold=self.similarity_threshold,
+                    #         model_fingerprint=embedding_result.model_fingerprint,
+                    #     )
+                    #     if match:
+                    #         name, score = match
+                    #         match_text = f"{name} ({score:.3f})"
+                    #         match_color = self.COLOR_MATCH
 
                     # 5. Display Results
                     # Liveness status
-                    y_offset = y1 - 30
-                    cv2.putText(
-                        frame,
-                        liveness_text,
-                        (x1, y_offset),
-                        self.FONT,
-                        self.FONT_SCALE,
-                        liveness_color,
-                        self.THICKNESS,
-                    )
+                    # y_offset = y1 - 30
+                    # cv2.putText(
+                    #     frame,
+                    #     liveness_text,
+                    #     (x1, y_offset),
+                    #     self.FONT,
+                    #     self.FONT_SCALE,
+                    #     liveness_color,
+                    #     self.THICKNESS,
+                    # )
 
                     # Identity match
-                    y_offset -= 25
-                    cv2.putText(
-                        frame,
-                        match_text,
-                        (x1, y_offset),
-                        self.FONT,
-                        self.FONT_SCALE,
-                        match_color,
-                        self.THICKNESS,
-                    )
+                    # y_offset -= 25
+                    # cv2.putText(
+                    #     frame,
+                    #     match_text,
+                    #     (x1, y_offset),
+                    #     self.FONT,
+                    #     self.FONT_SCALE,
+                    #     match_color,
+                    #     self.THICKNESS,
+                    # )
 
                     # Confidence score
-                    conf_text = f"Det: {detection.confidence:.2f}"
-                    y_offset = y2 + 20
-                    cv2.putText(
-                        frame,
-                        conf_text,
-                        (x1, y_offset),
-                        self.FONT,
-                        self.FONT_SCALE,
-                        self.COLOR_MATCH,
-                        1,
-                    )
+                    # conf_text = f"Det: {detection.confidence:.2f}"
+                    # y_offset = y2 + 20
+                    # cv2.putText(
+                    #     frame,
+                    #     conf_text,
+                    #     (x1, y_offset),
+                    #     self.FONT,
+                    #     self.FONT_SCALE,
+                    #     self.COLOR_MATCH,
+                    #     1,
+                    # )
 
                     # Store embedding for pending identity
-                    if pending_identity_name and embedding_result:
-                        identity_name = pending_identity_name
-                        self.db.add_embedding_result(identity_name, embedding_result)
-                        pending_identity_name = None
-                        logger.info(f"Added embedding for '{identity_name}'")
+                    # if pending_identity_name and embedding_result:
+                    #     identity_name = pending_identity_name
+                    #     self.db.add_embedding_result(identity_name, embedding_result)
+                    #     pending_identity_name = None
+                    #     logger.info(f"Added embedding for '{identity_name}'")
 
                 # Display frame info
                 info_text = f"Frame: {frame_count} | Identities: {len(self.db.list_identities())} | Faces: {len(detections)}"
@@ -260,7 +260,7 @@ def main() -> None:
     pipeline = FaceRecognitionPipeline(
         config_path="config/recognition.yaml",
         db_path="data/identities.npz",
-        camera_id=1,
+        camera_id=0,
         confidence_threshold=0.5,
         similarity_threshold=0.5,
     )

@@ -1,8 +1,12 @@
 ---
 recognition:
-  active_model: "scrfd_10g"
+  active_model: "insightface"
   models:
-    scrfd_10g:
+    insightface:
       enabled: true
+      det_size: [640, 640]
+      ctx_id: -1
+    scrfd_10g:
+      enabled: false
       det_size: [640, 640]
       device: "cpu"
