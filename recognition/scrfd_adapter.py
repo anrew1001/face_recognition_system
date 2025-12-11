@@ -238,6 +238,13 @@ class SCRFDAdapter(RecognitionModel):
             # scores shape: (H*W*num_anchors, 1)
             # bboxes shape: (H*W*num_anchors, 4)
 
+            # Validate shapes match
+            if scores.shape[0] != bboxes.shape[0]:
+                logger.warning(
+                    f"Shape mismatch: scores {scores.shape} vs bboxes {bboxes.shape}"
+                )
+                continue
+
             height = self._det_size[0] // stride
             width = self._det_size[1] // stride
 
