@@ -260,7 +260,7 @@ def main() -> None:
     pipeline = FaceRecognitionPipeline(
         config_path="config/recognition.yaml",
         db_path="data/identities.npz",
-        camera_id=0,
+        camera_id=1,
         confidence_threshold=0.5,
         similarity_threshold=0.5,
     )
