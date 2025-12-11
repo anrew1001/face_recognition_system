@@ -215,81 +215,65 @@ class SCRFDAdapter(RecognitionModel):
         outputs: List[np.ndarray],
         orig_shape: Tuple[int, int]
     ) -> List[FaceDetection]:
-        """Decode SCRFD model outputs to face detections.
-
-        Args:
-            outputs: Raw model outputs (scores, bboxes, landmarks).
-            orig_shape: Original image shape as (height, width).
-
-        Returns:
-            List of FaceDetection objects sorted by confidence descending.
-
-        Note:
-            - Filters by confidence_threshold
-            - Scales bboxes back to original image coordinates
-            - Applies NMS (if needed by model architecture)
-        """
-        # SCRFD outputs: [scores, bboxes, landmarks]
-        # This is a simplified implementation - actual SCRFD has multiple
-        # detection heads that need to be processed and combined
-
+        """Decode SCRFD anchor-based outputs."""
         detections = []
 
-        # Extract outputs (model-specific, may vary)
-        # This is a placeholder implementation that assumes:
-        # - output[0]: scores (N, 1)
-        # - output[1]: bboxes (N, 4) in format [x1, y1, x2, y2]
-        # - output[2]: landmarks (N, 10) as 5 points (x, y) pairs
+        # SCRFD outputs: multiple scales with [score, bbox, landmarks]
+        # Typically 3 scales × 3 outputs = 9 tensors
 
-        if len(outputs) < 2:
-            logger.warning("Unexpected model output format")
-            return []
+        stride_fpn = [8, 16, 32]
+        num_anchors = 2
 
-        scores = outputs[0].flatten()
-        bboxes = outputs[1]
-        landmarks = outputs[2] if len(outputs) > 2 else None
+        for idx, stride in enumerate(stride_fpn):
+            # Find corresponding outputs for this scale
+            score_idx = idx * 3
+            bbox_idx = idx * 3 + 1
 
-        # Scale factors from detection size to original size
-        h_scale = orig_shape[0] / self._det_size[0]
-        w_scale = orig_shape[1] / self._det_size[1]
-
-        for idx, score in enumerate(scores):
-            if score < self._confidence_threshold:
+            if score_idx >= len(outputs) or bbox_idx >= len(outputs):
                 continue
 
-            # Scale bbox to original image coordinates
-            bbox = bboxes[idx]
-            x1 = int(bbox[0] * w_scale)
-            y1 = int(bbox[1] * h_scale)
-            x2 = int(bbox[2] * w_scale)
-            y2 = int(bbox[3] * h_scale)
+            scores = outputs[score_idx]
+            bboxes = outputs[bbox_idx]
 
-            # Clip to image bounds
-            x1 = max(0, min(x1, orig_shape[1]))
-            y1 = max(0, min(y1, orig_shape[0]))
-            x2 = max(0, min(x2, orig_shape[1]))
-            y2 = max(0, min(y2, orig_shape[0]))
+            # scores shape: (H*W*num_anchors, 1)
+            # bboxes shape: (H*W*num_anchors, 4)
 
-            # Process landmarks if available
-            lmks = None
-            if landmarks is not None:
-                lmk_points = landmarks[idx].reshape(-1, 2)
-                # Scale landmarks to original coordinates
-                lmk_points[:, 0] *= w_scale
-                lmk_points[:, 1] *= h_scale
-                lmks = lmk_points
+            height = self._det_size[0] // stride
+            width = self._det_size[1] // stride
 
-            detection = FaceDetection(
-                bbox=(x1, y1, x2, y2),
-                confidence=float(score),
-                landmarks=lmks
-            )
-            detections.append(detection)
+            for i in range(scores.shape[0]):
+                score = scores[i, 0]
 
-        # Sort by confidence descending
+                if score < self._confidence_threshold:
+                    continue
+
+                # Get anchor center
+                anchor_idx = i // num_anchors
+                y = (anchor_idx // width) * stride
+                x = (anchor_idx % width) * stride
+
+                # Decode bbox (distance format)
+                bbox = bboxes[i]
+                x1 = (x - bbox[0]) * orig_shape[1] / self._det_size[1]
+                y1 = (y - bbox[1]) * orig_shape[0] / self._det_size[0]
+                x2 = (x + bbox[2]) * orig_shape[1] / self._det_size[1]
+                y2 = (y + bbox[3]) * orig_shape[0] / self._det_size[0]
+
+                # Clip to bounds
+                x1 = int(max(0, min(x1, orig_shape[1])))
+                y1 = int(max(0, min(y1, orig_shape[0])))
+                x2 = int(max(0, min(x2, orig_shape[1])))
+                y2 = int(max(0, min(y2, orig_shape[0])))
+
+                if x2 > x1 and y2 > y1:
+                    detections.append(FaceDetection(
+                        bbox=(x1, y1, x2, y2),
+                        confidence=float(score)
+                    ))
+
+        # NMS (simple - keep top K by score)
         detections.sort(key=lambda d: d.confidence, reverse=True)
-
-        return detections
+        return detections[:50]  # Keep max 50 faces
 
     def detect_faces(self, image: np.ndarray) -> List[FaceDetection]:
         """Detect all faces in image.
@@ -336,6 +320,10 @@ class SCRFDAdapter(RecognitionModel):
             outputs = self._session.run(None, {input_name: input_tensor})
         except Exception as e:
             raise RuntimeError(f"Inference failed: {e}") from e
+
+        logger.debug(f"SCRFD inference outputs: {len(outputs)} tensors")
+        for i, out in enumerate(outputs):
+            logger.debug(f"  Output {i}: shape={out.shape}, dtype={out.dtype}")
 
         # Decode predictions
         detections = self._decode_predictions(outputs, orig_shape)

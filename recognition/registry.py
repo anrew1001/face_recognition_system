@@ -60,7 +60,10 @@ class ModelRegistry:
             logger.info(f"Registered model: {name} (priority={priority})")
 
     def get(self, name: str) -> RecognitionModel:
-        """Get or instantiate a model by name (lazy loading)."""
+        """Get or instantiate a model by name (lazy loading).
+
+        Returns an unloaded model instance. Call load() explicitly to initialize it.
+        """
         with self._models_lock:
             if name not in self._model_classes:
                 raise ModelNotFoundError(f"Model '{name}' not found in registry")
@@ -69,16 +72,15 @@ class ModelRegistry:
             if name in self._model_instances:
                 return self._model_instances[name]
 
-            # Instantiate and load model
+            # Instantiate model (without loading)
             try:
                 model_class = self._model_classes[name]
                 instance = model_class()
-                instance.load()
                 self._model_instances[name] = instance
-                logger.info(f"Loaded model: {name}")
+                logger.info(f"Instantiated model: {name}")
                 return instance
             except Exception as e:
-                raise ModelLoadError(f"Failed to load model '{name}': {str(e)}")
+                raise ModelLoadError(f"Failed to instantiate model '{name}': {str(e)}")
 
     def get_info(self, name: str) -> ModelInfo:
         """Get model info by instantiating the model temporarily."""
