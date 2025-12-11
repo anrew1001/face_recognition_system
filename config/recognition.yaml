@@ -1,0 +1,8 @@
+---
+recognition:
+  active_model: "scrfd_10g"
+  models:
+    scrfd_10g:
+      enabled: true
+      det_size: [640, 640]
+      device: "cpu"
