@@ -68,6 +68,10 @@ class InsightFaceAdapter(RecognitionModel):
         # Fingerprint computed from ModelInfo.fingerprint(): sha256("insightface:0.7.0:512")[:16]
         self._model_fingerprint = "212a5ec8dbd9c95e"
 
+        # Frame caching to avoid redundant inference
+        self._cached_faces = None
+        self._cache_frame_id = -1
+
         logger.info(
             f"Initialized InsightFace adapter: det_size={det_size}, "
             f"ctx_id={ctx_id}"
@@ -147,11 +151,13 @@ class InsightFaceAdapter(RecognitionModel):
             self._model = None
             logger.info("Unloaded InsightFace model")
 
-    def detect_faces(self, image: np.ndarray) -> List[FaceDetection]:
+    def detect_faces(self, image: np.ndarray, frame_id: Optional[int] = None) -> List[FaceDetection]:
         """Detect all faces in image.
 
         Args:
             image: Input image as HxWx3 BGR uint8 numpy array.
+            frame_id: Optional frame identifier for caching. If provided and matches
+                     cached frame_id, uses cached results for better performance.
 
         Returns:
             List of FaceDetection objects sorted by confidence descending.
@@ -163,7 +169,7 @@ class InsightFaceAdapter(RecognitionModel):
 
         Example:
             >>> image = cv2.imread("photo.jpg")
-            >>> detections = adapter.detect_faces(image)
+            >>> detections = adapter.detect_faces(image, frame_id=0)
             >>> print(f"Found {len(detections)} faces")
         """
         if not self.is_loaded:
@@ -182,7 +188,15 @@ class InsightFaceAdapter(RecognitionModel):
             )
 
         try:
+            # Run detection and cache results
             faces = self._model.get(image)
+
+            # Cache faces for this frame
+            if frame_id is not None:
+                self._cached_faces = faces
+                self._cache_frame_id = frame_id
+                logger.debug(f"Cached {len(faces)} faces for frame_id={frame_id}")
+
         except Exception as e:
             raise RuntimeError(f"Face detection failed: {e}") from e
 
@@ -215,6 +229,7 @@ class InsightFaceAdapter(RecognitionModel):
         self,
         image: np.ndarray,
         detection: Optional[FaceDetection] = None,
+        frame_id: Optional[int] = None,
     ) -> Optional[EmbeddingResult]:
         """Extract face embedding from image region.
 
@@ -226,6 +241,8 @@ class InsightFaceAdapter(RecognitionModel):
             image: Input image as HxWx3 BGR uint8 numpy array.
             detection: Optional face detection to extract from. If None, detects
                       faces first.
+            frame_id: Optional frame identifier for cache lookup. If provided and
+                     matches cached frame_id, reuses cached face objects.
 
         Returns:
             EmbeddingResult with L2-normalized 512-dim embedding, or None if
@@ -237,8 +254,8 @@ class InsightFaceAdapter(RecognitionModel):
 
         Example:
             >>> image = cv2.imread("photo.jpg")
-            >>> detections = adapter.detect_faces(image)
-            >>> result = adapter.extract_embedding(image, detections[0])
+            >>> detections = adapter.detect_faces(image, frame_id=0)
+            >>> result = adapter.extract_embedding(image, detections[0], frame_id=0)
             >>> print(f"Embedding shape: {result.embedding.shape}")
         """
         if not self.is_loaded:
@@ -292,9 +309,22 @@ class InsightFaceAdapter(RecognitionModel):
                         landmarks=detection.landmarks
                     )
 
-                    # Run InsightFace on the full image to get the face object
-                    # InsightFace needs the full image for proper processing
-                    faces = self._model.get(image)
+                    # Try to use cached faces if available (PERFORMANCE OPTIMIZATION)
+                    use_cache = (
+                        frame_id is not None
+                        and frame_id == self._cache_frame_id
+                        and self._cached_faces is not None
+                    )
+
+                    if use_cache:
+                        # Reuse cached face objects - avoid redundant inference!
+                        faces = self._cached_faces
+                        logger.debug(f"Using cached faces for frame_id={frame_id} (cache hit)")
+                    else:
+                        # Cache miss - run inference
+                        faces = self._model.get(image)
+                        logger.debug(f"Cache miss for frame_id={frame_id}, running inference")
+
                     if not faces:
                         logger.warning("No faces detected for embedding extraction")
                         return None

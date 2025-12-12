@@ -6,7 +6,7 @@ import cv2
 
 from core.config import AppConfig
 from database import IdentityDatabase
-from liveness import BlinkDetector
+from liveness import MediaPipeLivenessDetector
 from recognition import registry
 
 logging.basicConfig(
@@ -55,7 +55,11 @@ class FaceRecognitionPipeline:
         self.config = AppConfig.from_yaml(config_path)
         self.model = None
         self.db = IdentityDatabase(max_embeddings_per_identity=5)
-        self.blink_detector = BlinkDetector(ear_threshold=0.2)
+        self.liveness_detector = MediaPipeLivenessDetector(
+            ear_threshold=0.25,
+            blink_consecutive_frames=2,
+            live_timeout=10.0
+        )
 
         logger.info("Face Recognition Pipeline initialized")
 
@@ -118,16 +122,21 @@ class FaceRecognitionPipeline:
                     fps_start_time = fps_end_time
                     fps_frame_count = 0
 
-                # 1. Face Detection
-                detections = self.model.detect_faces(frame)
+                # 1. Liveness Detection (MediaPipe)
+                is_alive, ear_value = self.liveness_detector.process_frame(frame)
+
+                # 2. Face Detection (with frame_id for caching)
+                detections = self.model.detect_faces(frame, frame_id=frame_count)
 
                 for detection in detections:
                     x1, y1, x2, y2 = detection.bbox
 
-                    # 2. Extract Embedding
-                    embedding_result = self.model.extract_embedding(frame, detection)
+                    # 3. Extract Embedding (uses cached results from detect_faces)
+                    embedding_result = self.model.extract_embedding(
+                        frame, detection, frame_id=frame_count
+                    )
 
-                    # 3. Match with Database
+                    # 4. Match with Database
                     match_text = "UNKNOWN"
                     match_color = self.COLOR_UNKNOWN
 
@@ -142,16 +151,17 @@ class FaceRecognitionPipeline:
                             match_text = f"{name} ({score:.3f})"
                             match_color = self.COLOR_MATCH
 
-                    # 4. Draw bounding box
+                    # 5. Draw bounding box (color based on liveness and match)
+                    bbox_color = match_color if is_alive else self.COLOR_DEAD
                     cv2.rectangle(
                         frame,
                         (x1, y1),
                         (x2, y2),
-                        match_color,
+                        bbox_color,
                         self.THICKNESS,
                     )
 
-                    # 5. Display identity label
+                    # 6. Display identity label
                     y_offset = y1 - 10
                     cv2.putText(
                         frame,
@@ -159,7 +169,7 @@ class FaceRecognitionPipeline:
                         (x1, y_offset),
                         self.FONT,
                         self.FONT_SCALE,
-                        match_color,
+                        bbox_color,
                         self.THICKNESS,
                     )
 
@@ -195,12 +205,26 @@ class FaceRecognitionPipeline:
                     #     pending_identity_name = None
                     #     logger.info(f"Added embedding for '{identity_name}'")
 
-                # Display frame info with FPS
-                info_text = f"FPS: {current_fps:.1f} | Frame: {frame_count} | Identities: {len(self.db.list_identities())} | Faces: {len(detections)}"
+                # Display frame info with FPS and liveness
+                liveness_status = "ALIVE" if is_alive else "NO BLINK"
+                liveness_color = self.COLOR_MATCH if is_alive else self.COLOR_DEAD
+                info_text = f"FPS: {current_fps:.1f} | Liveness: {liveness_status} (EAR: {ear_value:.3f}) | Faces: {len(detections)}"
                 cv2.putText(
                     frame,
                     info_text,
                     (10, 30),
+                    self.FONT,
+                    0.5,
+                    liveness_color,
+                    1,
+                )
+
+                # Database info
+                db_text = f"Identities in DB: {len(self.db.list_identities())}"
+                cv2.putText(
+                    frame,
+                    db_text,
+                    (10, 55),
                     self.FONT,
                     0.5,
                     (200, 200, 200),
@@ -230,7 +254,7 @@ class FaceRecognitionPipeline:
                     self._save_database()
                 elif key == ord("r"):
                     self._reset_database()
-                    self.blink_detector.reset()
+                    self.liveness_detector.reset()
 
         finally:
             cap.release()
