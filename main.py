@@ -93,6 +93,12 @@ class FaceRecognitionPipeline:
         frame_count = 0
         pending_identity_name = None
 
+        # FPS tracking
+        import time
+        fps_start_time = time.time()
+        fps_frame_count = 0
+        current_fps = 0.0
+
         try:
             while True:
                 ret, frame = cap.read()
@@ -101,7 +107,16 @@ class FaceRecognitionPipeline:
                     break
 
                 frame_count += 1
+                fps_frame_count += 1
                 h, w = frame.shape[:2]
+
+                # Calculate FPS every 30 frames
+                if fps_frame_count >= 30:
+                    fps_end_time = time.time()
+                    elapsed = fps_end_time - fps_start_time
+                    current_fps = fps_frame_count / elapsed if elapsed > 0 else 0.0
+                    fps_start_time = fps_end_time
+                    fps_frame_count = 0
 
                 # 1. Face Detection
                 detections = self.model.detect_faces(frame)
@@ -109,58 +124,44 @@ class FaceRecognitionPipeline:
                 for detection in detections:
                     x1, y1, x2, y2 = detection.bbox
 
-                    # 2. Liveness Check
-                    # try:
-                    #     is_alive = self.blink_detector.detect(detection)
-                    #     liveness_color = self.COLOR_MATCH if is_alive else self.COLOR_DEAD
-                    #     liveness_text = "LIVE" if is_alive else "DEAD"
-                    # except ValueError:
-                    #     # No landmarks available for liveness check
-                    #     is_alive = False
-                    #     liveness_color = self.COLOR_UNKNOWN
-                    #     liveness_text = "NO_LANDMARKS"
-                    #
-                    # # Draw bounding box
-                    # cv2.rectangle(
-                    #     frame,
-                    #     (x1, y1),
-                    #     (x2, y2),
-                    #     liveness_color,
-                    #     self.THICKNESS,
-                    # )
+                    # 2. Extract Embedding
+                    embedding_result = self.model.extract_embedding(frame, detection)
 
-                    # 3. Extract Embedding (only if alive or no landmarks)
-                    # embedding_result = None
-                    # if is_alive or liveness_text == "NO_LANDMARKS":
-                    #     embedding_result = self.model.extract_embedding(frame, detection)
+                    # 3. Match with Database
+                    match_text = "UNKNOWN"
+                    match_color = self.COLOR_UNKNOWN
 
-                    # 4. Match with Database
-                    # match_text = "UNKNOWN"
-                    # match_color = self.COLOR_UNKNOWN
-                    #
-                    # if embedding_result and self.db.list_identities():
-                    #     match = self.db.find_match(
-                    #         embedding_result.embedding,
-                    #         threshold=self.similarity_threshold,
-                    #         model_fingerprint=embedding_result.model_fingerprint,
-                    #     )
-                    #     if match:
-                    #         name, score = match
-                    #         match_text = f"{name} ({score:.3f})"
-                    #         match_color = self.COLOR_MATCH
+                    if embedding_result and self.db.list_identities():
+                        match = self.db.find_match(
+                            embedding_result.embedding,
+                            threshold=self.similarity_threshold,
+                            model_fingerprint=embedding_result.model_fingerprint,
+                        )
+                        if match:
+                            name, score = match
+                            match_text = f"{name} ({score:.3f})"
+                            match_color = self.COLOR_MATCH
 
-                    # 5. Display Results
-                    # Liveness status
-                    # y_offset = y1 - 30
-                    # cv2.putText(
-                    #     frame,
-                    #     liveness_text,
-                    #     (x1, y_offset),
-                    #     self.FONT,
-                    #     self.FONT_SCALE,
-                    #     liveness_color,
-                    #     self.THICKNESS,
-                    # )
+                    # 4. Draw bounding box
+                    cv2.rectangle(
+                        frame,
+                        (x1, y1),
+                        (x2, y2),
+                        match_color,
+                        self.THICKNESS,
+                    )
+
+                    # 5. Display identity label
+                    y_offset = y1 - 10
+                    cv2.putText(
+                        frame,
+                        match_text,
+                        (x1, y_offset),
+                        self.FONT,
+                        self.FONT_SCALE,
+                        match_color,
+                        self.THICKNESS,
+                    )
 
                     # Identity match
                     # y_offset -= 25
@@ -194,8 +195,8 @@ class FaceRecognitionPipeline:
                     #     pending_identity_name = None
                     #     logger.info(f"Added embedding for '{identity_name}'")
 
-                # Display frame info
-                info_text = f"Frame: {frame_count} | Identities: {len(self.db.list_identities())} | Faces: {len(detections)}"
+                # Display frame info with FPS
+                info_text = f"FPS: {current_fps:.1f} | Frame: {frame_count} | Identities: {len(self.db.list_identities())} | Faces: {len(detections)}"
                 cv2.putText(
                     frame,
                     info_text,

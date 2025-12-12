@@ -65,7 +65,8 @@ class InsightFaceAdapter(RecognitionModel):
         self._det_size = det_size
         self._ctx_id = ctx_id
         self._model = None
-        self._model_fingerprint = "insightface:buffalo_l:512"
+        # Fingerprint computed from ModelInfo.fingerprint(): sha256("insightface:0.7.0:512")[:16]
+        self._model_fingerprint = "212a5ec8dbd9c95e"
 
         logger.info(
             f"Initialized InsightFace adapter: det_size={det_size}, "
@@ -267,28 +268,44 @@ class InsightFaceAdapter(RecognitionModel):
                 # Use highest confidence detection
                 face = faces[0]
             else:
-                # Validate bbox is within bounds
+                # Clip bbox to image bounds instead of raising error
                 x1, y1, x2, y2 = detection.bbox
-                if x1 < 0 or y1 < 0 or x2 > w or y2 > h:
-                    raise ValueError(
-                        f"Detection bbox {detection.bbox} is out of image bounds "
-                        f"(width={w}, height={h})"
+                x1 = max(0, min(x1, w))
+                y1 = max(0, min(y1, h))
+                x2 = max(0, min(x2, w))
+                y2 = max(0, min(y2, h))
+
+                # Verify bbox is still valid after clipping
+                if x2 <= x1 or y2 <= y1:
+                    logger.warning(f"Invalid bbox after clipping: ({x1}, {y1}, {x2}, {y2})")
+                    # Fall back to full image detection
+                    faces = self._model.get(image)
+                    if not faces:
+                        logger.warning("No faces detected for embedding extraction")
+                        return None
+                    face = faces[0]
+                else:
+                    # Update detection with clipped bbox
+                    detection = FaceDetection(
+                        bbox=(x1, y1, x2, y2),
+                        confidence=detection.confidence,
+                        landmarks=detection.landmarks
                     )
 
-                # Run InsightFace on the full image to get the face object
-                # InsightFace needs the full image for proper processing
-                faces = self._model.get(image)
-                if not faces:
-                    logger.warning("No faces detected for embedding extraction")
-                    return None
+                    # Run InsightFace on the full image to get the face object
+                    # InsightFace needs the full image for proper processing
+                    faces = self._model.get(image)
+                    if not faces:
+                        logger.warning("No faces detected for embedding extraction")
+                        return None
 
-                # Find the face that matches our detection (by bbox proximity)
-                face = faces[0]  # Use first detected face as fallback
-                for f in faces:
-                    f_bbox = tuple(int(x) for x in f.bbox)
-                    if f_bbox == detection.bbox:
-                        face = f
-                        break
+                    # Find the face that matches our detection (by bbox proximity)
+                    face = faces[0]  # Use first detected face as fallback
+                    for f in faces:
+                        f_bbox = tuple(int(x) for x in f.bbox)
+                        if f_bbox == detection.bbox:
+                            face = f
+                            break
 
         except Exception as e:
             raise RuntimeError(f"Embedding extraction failed: {e}") from e
@@ -302,17 +319,8 @@ class InsightFaceAdapter(RecognitionModel):
 
         normalized_embedding = embedding / norm
 
-        # Crop face region for storage
-        x1, y1, x2, y2 = tuple(int(x) for x in face.bbox)
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(w, x2)
-        y2 = min(h, y2)
-
-        if x2 <= x1 or y2 <= y1:
-            logger.warning("Invalid face crop dimensions")
-            return None
-
+        # Crop face region for storage using detection bbox
+        x1, y1, x2, y2 = detection.bbox
         crop_bgr = image[y1:y2, x1:x2]
         crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
         crop_pil = Image.fromarray(crop_rgb)
