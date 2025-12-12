@@ -1,5 +1,6 @@
 """Identity database for storing and matching face embeddings."""
 import logging
+import tempfile
 from pathlib import Path
 from threading import Lock
 from typing import Dict, List, Optional, Tuple
@@ -254,17 +255,25 @@ class IdentityDatabase:
         with self._lock:
             return {name: len(embeddings) for name, embeddings in self._identities.items()}
 
-    def save(self, filepath: str) -> None:
-        """Save database to compressed NPZ file.
+    def save(self, filepath: str, passphrase: Optional[str] = None) -> None:
+        """Save database to compressed NPZ file with optional encryption.
 
-        Stores identities, embeddings, and fingerprints. Compatible with
-        numpy.load() and can be inspected with archive tools.
+        Stores identities, embeddings, and fingerprints. If passphrase is provided,
+        encrypts the entire NPZ file using AES-256-GCM.
 
         Args:
             filepath: Path to save .npz file to.
+            passphrase: Optional passphrase for encryption. If provided, saves
+                       encrypted file to filepath.enc instead of filepath.
 
         Raises:
             IOError: If file cannot be written.
+            RuntimeError: If encryption is requested but cryptography package unavailable.
+
+        Security:
+            - Encryption uses AES-256-GCM with PBKDF2 key derivation
+            - Original unencrypted NPZ file is not kept on disk
+            - Passphrase should be provided via environment variable or secure input
         """
         with self._lock:
             path = Path(filepath)
@@ -300,29 +309,123 @@ class IdentityDatabase:
                 list(self._identities.keys()), dtype="U64"
             )
 
-            np.savez_compressed(filepath, **data_dict)
-            logger.info(f"Saved database to {filepath} ({len(self._identities)} identities)")
+            # Save to NPZ file (possibly temporary if encrypting)
+            if passphrase:
+                # Save to temporary file, then encrypt
+                with tempfile.NamedTemporaryFile(
+                    mode='wb',
+                    suffix='.npz',
+                    delete=False,
+                    dir=path.parent
+                ) as temp_file:
+                    temp_path = Path(temp_file.name)
 
-    def load(self, filepath: str) -> None:
-        """Load database from NPZ file.
+                try:
+                    # Save unencrypted NPZ to temporary file
+                    np.savez_compressed(str(temp_path), **data_dict)
+
+                    # Encrypt to final destination
+                    from core.crypto_storage import CryptoStorage
+                    crypto = CryptoStorage()
+                    encrypted_path = path.with_suffix(path.suffix + '.enc')
+                    crypto.encrypt_file(temp_path, encrypted_path, passphrase)
+
+                    logger.info(
+                        f"Saved encrypted database to {encrypted_path} "
+                        f"({len(self._identities)} identities)"
+                    )
+
+                finally:
+                    # Clean up temporary unencrypted file
+                    if temp_path.exists():
+                        temp_path.unlink()
+
+            else:
+                # Save unencrypted NPZ directly
+                np.savez_compressed(filepath, **data_dict)
+                logger.info(
+                    f"Saved database to {filepath} ({len(self._identities)} identities)"
+                )
+
+    def load(self, filepath: str, passphrase: Optional[str] = None) -> None:
+        """Load database from NPZ file with optional decryption.
 
         Restores identities, embeddings, and model fingerprints.
-        Replaces current database contents.
+        Replaces current database contents. If encrypted file (.npz.enc) exists,
+        decrypts it first using provided passphrase.
 
         Args:
             filepath: Path to load .npz file from.
+            passphrase: Optional passphrase for decryption. Required if loading
+                       encrypted file (.npz.enc).
 
         Raises:
             FileNotFoundError: If file does not exist.
             ValueError: If file is corrupted or incompatible format.
+            DecryptionError: If decryption fails (wrong passphrase or corrupted file).
+
+        Security:
+            - Automatically detects encrypted files by .enc extension
+            - Decrypts to temporary file, loads data, then deletes temporary file
+            - Never leaves unencrypted data on disk when loading encrypted database
         """
         path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"Database file not found: {filepath}")
+        encrypted_path = path.with_suffix(path.suffix + '.enc')
+
+        # Check if encrypted version exists
+        if encrypted_path.exists():
+            if not passphrase:
+                raise ValueError(
+                    f"Encrypted database found at {encrypted_path} but no passphrase provided. "
+                    f"Please provide passphrase to decrypt."
+                )
+
+            # Decrypt to temporary file
+            with tempfile.NamedTemporaryFile(
+                mode='wb',
+                suffix='.npz',
+                delete=False,
+                dir=path.parent
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+
+            try:
+                # Decrypt encrypted file to temporary NPZ
+                from core.crypto_storage import CryptoStorage, DecryptionError
+                crypto = CryptoStorage()
+                crypto.decrypt_file(encrypted_path, temp_path, passphrase)
+
+                # Load from temporary decrypted file
+                load_path = temp_path
+                logger.info(f"Decrypted database from {encrypted_path}")
+
+            except DecryptionError as e:
+                # Clean up and re-raise with user-friendly message
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise ValueError(
+                    f"Failed to decrypt database: {str(e)}. "
+                    f"Please check your passphrase."
+                ) from e
+            except Exception as e:
+                # Clean up on any other error
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise
+
+        elif not path.exists():
+            raise FileNotFoundError(
+                f"Database file not found: {filepath} "
+                f"(also checked for encrypted version at {encrypted_path})"
+            )
+        else:
+            # Load unencrypted file directly
+            load_path = path
+            temp_path = None
 
         with self._lock:
             try:
-                with np.load(filepath, allow_pickle=False) as npz_file:
+                with np.load(str(load_path), allow_pickle=False) as npz_file:
                     keys = npz_file.files
 
                     # Clear current data
@@ -365,6 +468,12 @@ class IdentityDatabase:
 
             except Exception as e:
                 raise ValueError(f"Failed to load database: {str(e)}")
+
+            finally:
+                # Clean up temporary decrypted file
+                if temp_path and temp_path.exists():
+                    temp_path.unlink()
+                    logger.debug(f"Cleaned up temporary decrypted file: {temp_path}")
 
     def clear(self) -> None:
         """Clear all stored identities and embeddings.

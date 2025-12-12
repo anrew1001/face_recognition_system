@@ -10,3 +10,29 @@ recognition:
       enabled: false
       det_size: [640, 640]
       device: "cpu"
+
+# Database encryption (optional)
+# For demonstration of biometric data protection best practices
+database:
+  encryption:
+    # Enable encryption for identity database (biometric embeddings)
+    # Set to true to require encrypted storage
+    enabled: false  # Default: false for development
+
+    # Environment variable name for passphrase
+    # SECURITY: Never store passphrase in config file!
+    # Set passphrase via: export FACE_DB_PASSPHRASE="your_secure_passphrase"
+    passphrase_env_var: "FACE_DB_PASSPHRASE"
+
+    # Encryption algorithm: AES-256-GCM with PBKDF2 key derivation
+    # - Key size: 256 bits
+    # - PBKDF2 iterations: 100,000 (OWASP 2023 recommendation)
+    # - Salt size: 128 bits (random per encryption)
+    # - Nonce size: 96 bits (random per encryption)
+
+    # Note: This is demonstration-level security for educational purposes.
+    # Production deployments should use:
+    # - Hardware Security Modules (HSM)
+    # - Secure key management systems (AWS KMS, Azure Key Vault, etc.)
+    # - Regular key rotation policies
+    # - Audit logging for all encryption operations

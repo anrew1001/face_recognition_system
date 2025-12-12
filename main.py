@@ -1,5 +1,6 @@
 """Face Recognition System - Real-time face detection, liveness, and identification."""
 import logging
+import os
 from pathlib import Path
 
 import cv2
@@ -73,10 +74,24 @@ class FaceRecognitionPipeline:
             logger.info(f"Loaded model: {self.model.info.name} v{self.model.info.version}")
             logger.info(f"Model fingerprint: {self.model.info.fingerprint()}")
 
+            # Check for encryption passphrase in environment variable
+            passphrase = os.getenv("FACE_DB_PASSPHRASE")
+            if passphrase:
+                logger.info("Encryption passphrase found in environment (FACE_DB_PASSPHRASE)")
+
             # Load identity database if exists
             db_path = Path(self.db_path)
-            if db_path.exists():
-                self.db.load(str(db_path))
+            encrypted_path = db_path.with_suffix(db_path.suffix + '.enc')
+
+            if encrypted_path.exists():
+                # Encrypted database exists
+                self.db.load(str(db_path), passphrase=passphrase)
+                logger.info(
+                    f"Loaded encrypted identity database: {len(self.db.list_identities())} identities"
+                )
+            elif db_path.exists():
+                # Unencrypted database exists
+                self.db.load(str(db_path), passphrase=passphrase)
                 logger.info(f"Loaded identity database: {len(self.db.list_identities())} identities")
             else:
                 logger.info("Identity database not found, starting with empty DB")
@@ -262,12 +277,22 @@ class FaceRecognitionPipeline:
             logger.info("Camera feed closed")
 
     def _save_database(self) -> None:
-        """Save identity database to disk."""
+        """Save identity database to disk with optional encryption."""
         try:
             db_path = Path(self.db_path)
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.db.save(str(db_path))
-            logger.info(f"Database saved to {db_path}")
+
+            # Check for encryption passphrase
+            passphrase = os.getenv("FACE_DB_PASSPHRASE")
+
+            if passphrase:
+                self.db.save(str(db_path), passphrase=passphrase)
+                encrypted_path = db_path.with_suffix(db_path.suffix + '.enc')
+                logger.info(f"Database saved with encryption to {encrypted_path}")
+            else:
+                self.db.save(str(db_path))
+                logger.info(f"Database saved (unencrypted) to {db_path}")
+
         except Exception as e:
             logger.error(f"Failed to save database: {e}")
 
