@@ -85,6 +85,29 @@ class FaceRecognitionPipeline:
 
             if encrypted_path.exists():
                 # Encrypted database exists
+                if not passphrase:
+                    logger.error("")
+                    logger.error("=" * 70)
+                    logger.error("ENCRYPTED DATABASE FOUND BUT NO PASSPHRASE PROVIDED")
+                    logger.error("=" * 70)
+                    logger.error("")
+                    logger.error(f"Encrypted database: {encrypted_path}")
+                    logger.error("")
+                    logger.error("SOLUTION: Set the encryption password before running:")
+                    logger.error("")
+                    logger.error("  Option 1: Use the run script (EASIEST)")
+                    logger.error("    bash run_encrypted.sh")
+                    logger.error("")
+                    logger.error("  Option 2: Set environment variable")
+                    logger.error('    export FACE_DB_PASSPHRASE="123456789"')
+                    logger.error("    python main.py")
+                    logger.error("")
+                    logger.error("  Option 3: Use Python directly")
+                    logger.error('    FACE_DB_PASSPHRASE="123456789" python main.py')
+                    logger.error("")
+                    logger.error("=" * 70)
+                    return False
+
                 self.db.load(str(db_path), passphrase=passphrase)
                 logger.info(
                     f"Loaded encrypted identity database: {len(self.db.list_identities())} identities"

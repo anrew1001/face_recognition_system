@@ -50,7 +50,9 @@ class SCRFDAdapter(RecognitionModel):
         model_path: str = "models/scrfd_10g.onnx",
         det_size: Tuple[int, int] = (640, 640),
         confidence_threshold: float = 0.5,
-        device: str = "cpu"
+        device: str = "cpu",
+        num_threads: int = 4,
+        graph_optimization: bool = True
     ) -> None:
         """Initialize SCRFD adapter.
 
@@ -59,6 +61,8 @@ class SCRFDAdapter(RecognitionModel):
             det_size: Detection input size as (height, width).
             confidence_threshold: Minimum confidence threshold for detections.
             device: Device to run on ("cpu" or "coreml").
+            num_threads: Number of threads for CPU inference (default: 4).
+            graph_optimization: Enable ONNX graph optimizations (default: True).
 
         Raises:
             ValueError: If device is not "cpu" or "coreml".
@@ -70,11 +74,13 @@ class SCRFDAdapter(RecognitionModel):
         self._det_size = det_size
         self._confidence_threshold = confidence_threshold
         self._device = device
+        self._num_threads = num_threads
+        self._graph_optimization = graph_optimization
         self._session = None
 
         logger.info(
             f"Initialized SCRFD adapter: model_path={model_path}, "
-            f"det_size={det_size}, device={device}"
+            f"det_size={det_size}, device={device}, num_threads={num_threads}"
         )
 
     @property
@@ -149,12 +155,25 @@ class SCRFDAdapter(RecognitionModel):
         else:
             providers.append("CPUExecutionProvider")
 
-        # Create inference session
+        # Create inference session with optimizations
         try:
             sess_options = ort.SessionOptions()
-            sess_options.graph_optimization_level = (
-                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            )
+
+            # Enable graph optimizations for better performance
+            if self._graph_optimization:
+                sess_options.graph_optimization_level = (
+                    ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                )
+                logger.info("Enabled ONNX graph optimizations (ORT_ENABLE_ALL)")
+
+            # Configure threading for CPU inference
+            if self._device == "cpu":
+                sess_options.intra_op_num_threads = self._num_threads
+                sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+                logger.info(
+                    f"Configured CPU inference: {self._num_threads} threads, "
+                    "sequential execution"
+                )
 
             self._session = ort.InferenceSession(
                 str(self._model_path),
