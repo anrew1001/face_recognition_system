@@ -1,12 +1,16 @@
-"""SCRFD_10G face detection adapter.
+"""SCRFD_2.5G_KPS face detection adapter.
 
 SCRFD (Sample and Computation Redistribution Face Detector) is an efficient
 face detection model optimized for performance. This adapter integrates the
-ONNX model with our RecognitionModel interface.
+SCRFD_2.5G_KPS ONNX model with our RecognitionModel interface.
+
+The SCRFD_2.5G_KPS model is optimized for better accuracy/speed tradeoff
+compared to SCRFD_10G, making it suitable for composite detection architectures.
 
 Note:
-    SCRFD_10G is a detection-only model. Embedding extraction requires a
+    SCRFD_2.5G_KPS is a detection-only model. Embedding extraction requires a
     separate model (e.g., ArcFace) which will be integrated in the future.
+    The model provides 5-point facial landmarks critical for face alignment.
 """
 import logging
 from pathlib import Path
@@ -23,11 +27,11 @@ from .types import EmbeddingResult, FaceDetection, ModelInfo
 logger = logging.getLogger(__name__)
 
 
-@register_model("scrfd_10g", priority=10)
-class SCRFDAdapter(RecognitionModel):
-    """SCRFD_10G face detection model adapter.
+@register_model("scrfd_2.5g", priority=15)
+class SCRFD25GAdapter(RecognitionModel):
+    """SCRFD_2.5G_KPS face detection model adapter.
 
-    This adapter provides face detection capabilities using the SCRFD_10G
+    This adapter provides face detection capabilities using the SCRFD_2.5G_KPS
     ONNX model. It supports CPU and Apple Silicon (CoreML) execution.
 
     Attributes:
@@ -38,7 +42,7 @@ class SCRFDAdapter(RecognitionModel):
         _session: ONNX Runtime inference session.
 
     Example:
-        >>> adapter = SCRFDAdapter(device="cpu")
+        >>> adapter = SCRFD25GAdapter(device="cpu")
         >>> adapter.load()
         >>> detections = adapter.detect_faces(image)
         >>> for det in detections:
@@ -47,7 +51,7 @@ class SCRFDAdapter(RecognitionModel):
 
     def __init__(
         self,
-        model_path: str = "models/scrfd_2.5g.onnx",
+        model_path: str = "models/det_2.5g.onnx",
         det_size: Tuple[int, int] = (640, 640),
         confidence_threshold: float = 0.5,
         device: str = "cpu",
@@ -55,7 +59,7 @@ class SCRFDAdapter(RecognitionModel):
         graph_optimization: bool = True,
         **kwargs  # Accept extra config parameters (e.g., 'enabled')
     ) -> None:
-        """Initialize SCRFD adapter.
+        """Initialize SCRFD_2.5G adapter.
 
         Args:
             model_path: Path to ONNX model file.
@@ -85,7 +89,7 @@ class SCRFDAdapter(RecognitionModel):
             logger.debug(f"Ignoring extra config parameters: {list(kwargs.keys())}")
 
         logger.info(
-            f"Initialized SCRFD adapter: model_path={model_path}, "
+            f"Initialized SCRFD_2.5G adapter: model_path={model_path}, "
             f"det_size={det_size}, device={device}, num_threads={num_threads}"
         )
 
@@ -101,7 +105,7 @@ class SCRFDAdapter(RecognitionModel):
             replaced when ArcFace integration is added.
         """
         return ModelInfo(
-            name="scrfd_10g",
+            name="scrfd_2.5g",
             version="1.0",
             embedding_dim=512,  # Placeholder, will use ArcFace later
             input_size=self._det_size
@@ -141,7 +145,8 @@ class SCRFDAdapter(RecognitionModel):
         if not self._model_path.exists():
             raise RuntimeError(
                 f"Model file not found: {self._model_path}. "
-                f"Please download SCRFD_10G ONNX model to this location."
+                f"Please download SCRFD_2.5G_KPS ONNX model from:\n"
+                f"https://huggingface.co/public-data/insightface/tree/main/models/scrfd_2.5g_bnkps/"
             )
 
         # Configure execution providers
@@ -188,7 +193,7 @@ class SCRFDAdapter(RecognitionModel):
             )
 
             logger.info(
-                f"Loaded SCRFD model from {self._model_path} "
+                f"Loaded SCRFD_2.5G model from {self._model_path} "
                 f"with providers: {self._session.get_providers()}"
             )
         except Exception as e:
@@ -201,7 +206,7 @@ class SCRFDAdapter(RecognitionModel):
         """
         if self._session is not None:
             self._session = None
-            logger.info("Unloaded SCRFD model")
+            logger.info("Unloaded SCRFD_2.5G model")
 
     def _preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """Preprocess image for SCRFD inference.
@@ -308,7 +313,7 @@ class SCRFDAdapter(RecognitionModel):
     ) -> List[FaceDetection]:
         """Decode SCRFD anchor-based outputs with proper NMS.
 
-        SCRFD_10G outputs 15 tensors for 5 scales:
+        SCRFD_2.5G_KPS outputs 15 tensors for 5 scales:
         - Outputs 0-4: scores (one per scale)
         - Outputs 5-9: bboxes (4 coords per anchor)
         - Outputs 10-14: landmarks (10 values = 5 points × 2 coords)
@@ -322,7 +327,7 @@ class SCRFDAdapter(RecognitionModel):
         """
         detections = []
 
-        # SCRFD_10G uses 5 FPN scales with strides [8, 16, 32, 64, 128]
+        # SCRFD_2.5G uses 5 FPN scales with strides [8, 16, 32, 64, 128]
         # However, for 640x640 input, effective scales are smaller
         # We determine stride from the output grid size
         num_scales = 5
@@ -454,7 +459,7 @@ class SCRFDAdapter(RecognitionModel):
         except Exception as e:
             raise RuntimeError(f"Inference failed: {e}") from e
 
-        logger.debug(f"SCRFD inference outputs: {len(outputs)} tensors")
+        logger.debug(f"SCRFD_2.5G inference outputs: {len(outputs)} tensors")
         for i, out in enumerate(outputs):
             logger.debug(f"  Output {i}: shape={out.shape}, dtype={out.dtype}")
 
@@ -474,7 +479,7 @@ class SCRFDAdapter(RecognitionModel):
         """Extract face embedding from image region.
 
         Note:
-            SCRFD_10G is a detection-only model. This method performs face
+            SCRFD_2.5G_KPS is a detection-only model. This method performs face
             detection and returns a placeholder embedding until ArcFace
             integration is implemented.
 

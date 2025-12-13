@@ -48,13 +48,15 @@ class InsightFaceAdapter(RecognitionModel):
     def __init__(
         self,
         det_size: Tuple[int, int] = (640, 640),
-        ctx_id: int = -1
+        ctx_id: int = -1,
+        **kwargs  # Accept extra config parameters
     ) -> None:
         """Initialize InsightFace adapter.
 
         Args:
             det_size: Detection input size as (height, width).
             ctx_id: Context ID for execution (-1 for CPU, >=0 for GPU).
+            **kwargs: Additional config parameters (ignored for compatibility).
 
         Raises:
             ValueError: If ctx_id is invalid.
@@ -71,6 +73,10 @@ class InsightFaceAdapter(RecognitionModel):
         # Frame caching to avoid redundant inference
         self._cached_faces = None
         self._cache_frame_id = -1
+
+        # Log ignored parameters for debugging
+        if kwargs:
+            logger.debug(f"Ignoring extra config parameters: {list(kwargs.keys())}")
 
         logger.info(
             f"Initialized InsightFace adapter: det_size={det_size}, "

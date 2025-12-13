@@ -59,6 +59,20 @@ class AppConfig:
         """Get the active model name."""
         return self.get("recognition.active_model", "scrfd_10g")
 
+    def get_model_param(self, model_name: str, param: str, default: Any = None) -> Any:
+        """Get a specific parameter for a model.
+
+        Args:
+            model_name: Name of the model.
+            param: Parameter name.
+            default: Default value if parameter not found.
+
+        Returns:
+            Parameter value or default.
+        """
+        model_config = self.get_model_config(model_name)
+        return model_config.get(param, default)
+
     def to_dict(self) -> Dict[str, Any]:
         """Get the entire configuration as a dictionary."""
         return dict(self._config)

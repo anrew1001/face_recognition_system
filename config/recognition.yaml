@@ -1,15 +1,29 @@
 ---
 recognition:
-  active_model: "insightface"
+  active_model: "insightface"  # Use InsightFace for now (has embeddings)
   models:
     insightface:
       enabled: true
       det_size: [640, 640]
       ctx_id: -1
-    scrfd_10g:
-      enabled: false
-      det_size: [640, 640]
+    scrfd_2.5g:
+      enabled: true
+      model_path: "models/det_2.5g.onnx"
+      det_size: [640, 640]  # Standard resolution for SCRFD_2.5G_KPS
+      confidence_threshold: 0.5
       device: "cpu"
+      # ONNX Runtime optimizations for better performance
+      num_threads: 8  # Tuned for best performance
+      graph_optimization: true  # Enable all graph optimizations
+    scrfd_10g:
+      enabled: true
+      model_path: "models/scrfd_2.5g.onnx"
+      det_size: [320, 320]  # Optimized for 13+ FPS on this system
+      confidence_threshold: 0.4
+      device: "cpu"
+      # ONNX Runtime optimizations for better performance
+      num_threads: 8  # Tuned for best performance
+      graph_optimization: true  # Enable all graph optimizations
 
 # Database encryption (optional)
 # For demonstration of biometric data protection best practices

@@ -43,7 +43,7 @@ def verify_interface():
 
     # Instantiate adapter
     adapter = SCRFDAdapter(
-        model_path="models/scrfd_10g.onnx",
+        model_path="models/scrfd_2.5g.onnx",
         det_size=(640, 640),
         confidence_threshold=0.5,
         device="cpu"
@@ -128,7 +128,7 @@ def main():
     if all_passed:
         logger.info("\n✓ All verifications passed!")
         logger.info("\nNext steps:")
-        logger.info("1. Download SCRFD_10G ONNX model to models/scrfd_10g.onnx")
+        logger.info("1. Download SCRFD_10G ONNX model to models/scrfd_2.5g.onnx")
         logger.info("2. Test with actual images using adapter.load() and adapter.detect_faces()")
         logger.info("3. Integrate ArcFace for embedding extraction")
     else:

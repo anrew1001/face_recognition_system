@@ -8,6 +8,17 @@ from .types import ModelInfo
 
 logger = logging.getLogger(__name__)
 
+# Import config at module level to avoid circular imports
+_app_config = None
+
+def _get_app_config():
+    """Lazy load AppConfig to avoid circular imports."""
+    global _app_config
+    if _app_config is None:
+        from core.config import AppConfig
+        _app_config = AppConfig()
+    return _app_config
+
 
 class ModelNotFoundError(Exception):
     """Raised when model is not found in registry."""
@@ -59,10 +70,17 @@ class ModelRegistry:
             self._priorities[name] = priority
             logger.info(f"Registered model: {name} (priority={priority})")
 
-    def get(self, name: str) -> RecognitionModel:
+    def get(self, name: str, config: Optional[Dict[str, Any]] = None) -> RecognitionModel:
         """Get or instantiate a model by name (lazy loading).
 
         Returns an unloaded model instance. Call load() explicitly to initialize it.
+
+        Args:
+            name: Model name to retrieve.
+            config: Optional config dict. If None, loads from AppConfig.
+
+        Returns:
+            RecognitionModel instance.
         """
         with self._models_lock:
             if name not in self._model_classes:
@@ -72,10 +90,17 @@ class ModelRegistry:
             if name in self._model_instances:
                 return self._model_instances[name]
 
-            # Instantiate model (without loading)
+            # Get config for this model
+            if config is None:
+                app_config = _get_app_config()
+                config = app_config.get_model_config(name)
+                logger.debug(f"Loaded config for {name}: {config}")
+
+            # Instantiate model with config
             try:
                 model_class = self._model_classes[name]
-                instance = model_class()
+                # Pass config kwargs to model constructor
+                instance = model_class(**config)
                 self._model_instances[name] = instance
                 logger.info(f"Instantiated model: {name}")
                 return instance
