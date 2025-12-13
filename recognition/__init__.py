@@ -8,6 +8,7 @@ from .types import EmbeddingResult, FaceDetection, ModelInfo
 from . import scrfd_adapter  # noqa: F401
 from . import scrfd_25g_adapter  # noqa: F401
 from . import insightface_adapter  # noqa: F401
+from . import arcface_adapter  # noqa: F401
 
 __all__ = [
     "RecognitionModel",

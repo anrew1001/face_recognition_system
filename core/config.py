@@ -59,6 +59,18 @@ class AppConfig:
         """Get the active model name."""
         return self.get("recognition.active_model", "scrfd_10g")
 
+    def use_composite_architecture(self) -> bool:
+        """Check if composite architecture (detection + recognition) is enabled."""
+        return self.get("recognition.use_composite", False)
+
+    def get_detection_model(self) -> str:
+        """Get the detection model name for composite architecture."""
+        return self.get("recognition.detection_model", "scrfd_2.5g")
+
+    def get_recognition_model(self) -> str:
+        """Get the recognition model name for composite architecture."""
+        return self.get("recognition.recognition_model", "arcface")
+
     def get_model_param(self, model_name: str, param: str, default: Any = None) -> Any:
         """Get a specific parameter for a model.
 

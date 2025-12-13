@@ -9,6 +9,7 @@ from core.config import AppConfig
 from database import IdentityDatabase
 from liveness import MediaPipeLivenessDetector
 from recognition import registry
+from utils.alignment import align_face
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +55,13 @@ class FaceRecognitionPipeline:
 
         # Initialize components
         self.config = AppConfig.from_yaml(config_path)
-        self.model = None
+
+        # Support both composite (detection + recognition) and single model architectures
+        self.use_composite = self.config.use_composite_architecture()
+        self.detector = None  # For composite: fast face detector (SCRFD)
+        self.recognizer = None  # For composite: embedding extractor (ArcFace)
+        self.model = None  # For single model: all-in-one (InsightFace)
+
         self.db = IdentityDatabase(max_embeddings_per_identity=5)
         self.liveness_detector = MediaPipeLivenessDetector(
             ear_threshold=0.25,
@@ -62,17 +69,52 @@ class FaceRecognitionPipeline:
             live_timeout=10.0
         )
 
-        logger.info("Face Recognition Pipeline initialized")
+        logger.info(
+            f"Face Recognition Pipeline initialized "
+            f"(composite={self.use_composite})"
+        )
 
     def setup(self) -> bool:
         """Load model and database. Returns True if successful."""
         try:
-            # Load model
-            model_name = self.config.get_active_model()
-            self.model = registry.get(model_name)
-            self.model.load()
-            logger.info(f"Loaded model: {self.model.info.name} v{self.model.info.version}")
-            logger.info(f"Model fingerprint: {self.model.info.fingerprint()}")
+            # Clear model cache to ensure fresh config is used
+            # This prevents stale configuration from being cached
+            registry._model_instances.clear()
+            logger.debug("Cleared model cache to use fresh configuration")
+
+            # Load models based on architecture choice
+            if self.use_composite:
+                # Composite architecture: fast detector + specialized recognizer
+                detector_name = self.config.get_detection_model()
+                recognizer_name = self.config.get_recognition_model()
+
+                logger.info(f"Loading composite architecture:")
+                logger.info(f"  Detector: {detector_name}")
+                logger.info(f"  Recognizer: {recognizer_name}")
+
+                # Load detector (e.g., SCRFD_2.5G)
+                self.detector = registry.get(detector_name)
+                self.detector.load()
+                logger.info(
+                    f"✓ Detector loaded: {self.detector.info.name} "
+                    f"v{self.detector.info.version}"
+                )
+
+                # Load recognizer (e.g., ArcFace)
+                self.recognizer = registry.get(recognizer_name)
+                self.recognizer.load()
+                logger.info(
+                    f"✓ Recognizer loaded: {self.recognizer.info.name} "
+                    f"v{self.recognizer.info.version}"
+                )
+                logger.info(f"Model fingerprint: {self.recognizer.info.fingerprint()}")
+            else:
+                # Single model architecture (legacy)
+                model_name = self.config.get_active_model()
+                self.model = registry.get(model_name)
+                self.model.load()
+                logger.info(f"Loaded model: {self.model.info.name} v{self.model.info.version}")
+                logger.info(f"Model fingerprint: {self.model.info.fingerprint()}")
 
             # Check for encryption passphrase in environment variable
             passphrase = os.getenv("FACE_DB_PASSPHRASE")
@@ -163,16 +205,38 @@ class FaceRecognitionPipeline:
                 # 1. Liveness Detection (MediaPipe)
                 is_alive, ear_value = self.liveness_detector.process_frame(frame)
 
-                # 2. Face Detection (with frame_id for caching)
-                detections = self.model.detect_faces(frame, frame_id=frame_count)
+                # 2. Face Detection
+                if self.use_composite:
+                    # Composite: Use fast detector (SCRFD_2.5G)
+                    detections = self.detector.detect_faces(frame, frame_id=frame_count)
+                else:
+                    # Legacy: Use single model
+                    detections = self.model.detect_faces(frame, frame_id=frame_count)
 
                 for detection in detections:
                     x1, y1, x2, y2 = detection.bbox
 
-                    # 3. Extract Embedding (uses cached results from detect_faces)
-                    embedding_result = self.model.extract_embedding(
-                        frame, detection, frame_id=frame_count
-                    )
+                    # 3. Extract Embedding
+                    embedding_result = None
+                    if self.use_composite:
+                        # Composite: Align face and use specialized recognizer
+                        if detection.landmarks is not None and len(detection.landmarks) >= 5:
+                            # Align face to 112x112 RGB
+                            aligned_face = align_face(frame, detection.landmarks)
+                            if aligned_face is not None:
+                                # Extract embedding from aligned face
+                                embedding_result = self.recognizer.extract_embedding(
+                                    aligned_face, detection
+                                )
+                            else:
+                                logger.debug(f"Face alignment failed for detection at {detection.bbox}")
+                        else:
+                            logger.debug(f"No landmarks for detection at {detection.bbox}")
+                    else:
+                        # Legacy: Use single model (with caching)
+                        embedding_result = self.model.extract_embedding(
+                            frame, detection, frame_id=frame_count
+                        )
 
                     # 4. Match with Database
                     match_text = "UNKNOWN"
@@ -246,11 +310,30 @@ class FaceRecognitionPipeline:
                 # Display frame info with FPS and liveness
                 liveness_status = "ALIVE" if is_alive else "NO BLINK"
                 liveness_color = self.COLOR_MATCH if is_alive else self.COLOR_DEAD
-                info_text = f"FPS: {current_fps:.1f} | Liveness: {liveness_status} (EAR: {ear_value:.3f}) | Faces: {len(detections)}"
+
+                # Show model info
+                if self.use_composite:
+                    model_info = f"Detector: {self.detector.info.name} | Recognizer: {self.recognizer.info.name}"
+                else:
+                    model_info = f"Model: {self.model.info.name}"
+
+                info_text = f"FPS: {current_fps:.1f} | {model_info} | Faces: {len(detections)}"
                 cv2.putText(
                     frame,
                     info_text,
                     (10, 30),
+                    self.FONT,
+                    0.5,
+                    liveness_color,
+                    1,
+                )
+
+                # Liveness info on second line
+                liveness_text = f"Liveness: {liveness_status} (EAR: {ear_value:.3f})"
+                cv2.putText(
+                    frame,
+                    liveness_text,
+                    (10, 50),
                     self.FONT,
                     0.5,
                     liveness_color,
@@ -262,7 +345,7 @@ class FaceRecognitionPipeline:
                 cv2.putText(
                     frame,
                     db_text,
-                    (10, 55),
+                    (10, 70),
                     self.FONT,
                     0.5,
                     (200, 200, 200),

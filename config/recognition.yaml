@@ -1,6 +1,20 @@
 ---
 recognition:
-  active_model: "insightface"  # Use InsightFace for now (has embeddings)
+  # Composite architecture: use fast detector + specialized recognizer
+  # For best performance (15-20 FPS target):
+  #   detection_model: scrfd_2.5g (fast, accurate face detection)
+  #   recognition_model: arcface (optimized embedding extraction)
+  # For all-in-one solution (lower FPS but simpler):
+  #   active_model: insightface (does both detection and recognition)
+
+  # Use composite architecture (two models)
+  use_composite: true
+  detection_model: "insightface"     # Reliable face detector (WORKING)
+  recognition_model: "arcface"       # Recognition-only model for embeddings
+
+  # Legacy single model mode (kept for compatibility)
+  active_model: "insightface"  # Used only when use_composite=false
+
   models:
     insightface:
       enabled: true
@@ -8,9 +22,9 @@ recognition:
       ctx_id: -1
     scrfd_2.5g:
       enabled: true
-      model_path: "models/det_2.5g.onnx"
+      model_path: "models/scrfd_2.5g.onnx"
       det_size: [640, 640]  # Standard resolution for SCRFD_2.5G_KPS
-      confidence_threshold: 0.5
+      confidence_threshold: 0.3  # Lower threshold for better detection (was 0.5)
       device: "cpu"
       # ONNX Runtime optimizations for better performance
       num_threads: 8  # Tuned for best performance
@@ -23,6 +37,13 @@ recognition:
       device: "cpu"
       # ONNX Runtime optimizations for better performance
       num_threads: 8  # Tuned for best performance
+      graph_optimization: true  # Enable all graph optimizations
+    arcface:
+      enabled: true
+      model_path: "models/w600k_r50.onnx"
+      device: "cpu"
+      # ONNX Runtime optimizations for best performance
+      num_threads: 4  # Optimal for embedding extraction
       graph_optimization: true  # Enable all graph optimizations
 
 # Database encryption (optional)
