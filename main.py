@@ -99,6 +99,11 @@ class FaceRecognitionPipeline:
                     f"✓ Detector loaded: {self.detector.info.name} "
                     f"v{self.detector.info.version}"
                 )
+                logger.info(
+                    f"  Detector config: model_path={self.detector._model_path}, "
+                    f"det_size={self.detector._det_size}, "
+                    f"confidence_threshold={self.detector._confidence_threshold}"
+                )
 
                 # Load recognizer (e.g., ArcFace)
                 self.recognizer = registry.get(recognizer_name)
@@ -183,6 +188,21 @@ class FaceRecognitionPipeline:
         fps_frame_count = 0
         current_fps = 0.0
 
+        # Liveness state (cached when no faces detected)
+        is_alive = False
+        ear_value = 0.0
+
+        # Frame processing parameters (performance optimization)
+        MAX_PROCESS_DIM = 480  # Downscale to 480p for processing, keep original for display
+        FRAME_SKIP_INTERVAL = 2  # Process every 2nd frame
+        LIVENESS_CHECK_INTERVAL = 5  # Check liveness every 5th processed frame
+        frame_skip_counter = 0
+        liveness_check_counter = 0
+        cached_detections = []
+        cached_match_results = {}  # Maps detection bbox tuple to match_text and color
+        cached_is_alive = False  # Cache liveness state
+        cached_ear_value = 0.0  # Cache ear value for display
+
         try:
             while True:
                 ret, frame = cap.read()
@@ -194,6 +214,17 @@ class FaceRecognitionPipeline:
                 fps_frame_count += 1
                 h, w = frame.shape[:2]
 
+                # Downscale frame for processing (reduce pixels by ~2.7x if 1280x720)
+                if max(h, w) > MAX_PROCESS_DIM:
+                    scale = MAX_PROCESS_DIM / float(max(h, w))
+                    proc_frame = cv2.resize(
+                        frame,
+                        (int(w * scale), int(h * scale)),
+                        interpolation=cv2.INTER_AREA
+                    )
+                else:
+                    proc_frame = frame
+
                 # Calculate FPS every 30 frames
                 if fps_frame_count >= 30:
                     fps_end_time = time.time()
@@ -202,56 +233,113 @@ class FaceRecognitionPipeline:
                     fps_start_time = fps_end_time
                     fps_frame_count = 0
 
-                # 1. Liveness Detection (MediaPipe)
-                is_alive, ear_value = self.liveness_detector.process_frame(frame)
+                # Frame skipping: Process every Nth frame, use cached results on skip
+                frame_skip_counter += 1
+                should_process = (frame_skip_counter >= FRAME_SKIP_INTERVAL)
 
-                # 2. Face Detection
-                if self.use_composite:
-                    # Composite: Use fast detector (SCRFD_2.5G)
-                    detections = self.detector.detect_faces(frame, frame_id=frame_count)
-                else:
-                    # Legacy: Use single model
-                    detections = self.model.detect_faces(frame, frame_id=frame_count)
-
-                for detection in detections:
-                    x1, y1, x2, y2 = detection.bbox
-
-                    # 3. Extract Embedding
-                    embedding_result = None
+                if should_process:
+                    frame_skip_counter = 0
+                    # 1. Face Detection (MOVED BEFORE LIVENESS FOR PERFORMANCE)
                     if self.use_composite:
-                        # Composite: Align face and use specialized recognizer
-                        if detection.landmarks is not None and len(detection.landmarks) >= 5:
-                            # Align face to 112x112 RGB
-                            aligned_face = align_face(frame, detection.landmarks)
-                            if aligned_face is not None:
-                                # Extract embedding from aligned face
-                                embedding_result = self.recognizer.extract_embedding(
-                                    aligned_face, detection
-                                )
-                            else:
-                                logger.debug(f"Face alignment failed for detection at {detection.bbox}")
-                        else:
-                            logger.debug(f"No landmarks for detection at {detection.bbox}")
+                        # Composite: Use fast detector (SCRFD_2.5G)
+                        detections = self.detector.detect_faces(proc_frame, frame_id=frame_count)
+                        # Debug logging for detection issues
+                        if frame_count % 30 == 0:  # Log every 30 frames to avoid spam
+                            logger.debug(
+                                f"Frame {frame_count}: proc_frame shape={proc_frame.shape}, "
+                                f"detector={self.detector.__class__.__name__}, "
+                                f"threshold={self.detector._confidence_threshold}, "
+                                f"detections={len(detections)}"
+                            )
                     else:
-                        # Legacy: Use single model (with caching)
-                        embedding_result = self.model.extract_embedding(
-                            frame, detection, frame_id=frame_count
-                        )
+                        # Legacy: Use single model
+                        detections = self.model.detect_faces(proc_frame, frame_id=frame_count)
 
-                    # 4. Match with Database
-                    match_text = "UNKNOWN"
-                    match_color = self.COLOR_UNKNOWN
+                    cached_detections = detections
 
-                    if embedding_result and self.db.list_identities():
-                        match = self.db.find_match(
-                            embedding_result.embedding,
-                            threshold=self.similarity_threshold,
-                            model_fingerprint=embedding_result.model_fingerprint,
-                        )
-                        if match:
-                            name, score = match
-                            match_text = f"{name} ({score:.3f})"
-                            match_color = self.COLOR_MATCH
+                    # 2. Liveness Detection (ONLY IF FACES DETECTED AND INTERVAL MET)
+                    if len(detections) > 0:
+                        liveness_check_counter += 1
+                        if liveness_check_counter >= LIVENESS_CHECK_INTERVAL:
+                            # Use proc_frame to reduce MediaPipe overhead (~2.7x fewer pixels)
+                            is_alive, ear_value = self.liveness_detector.process_frame(proc_frame)
+                            cached_is_alive = is_alive
+                            cached_ear_value = ear_value
+                            liveness_check_counter = 0
+                        else:
+                            is_alive = cached_is_alive
+                            ear_value = cached_ear_value
+                else:
+                    # Use cached detections and liveness state on skip frames
+                    detections = cached_detections
+                    is_alive = cached_is_alive
+                    ear_value = cached_ear_value
+
+                # Scale factor to map detection bbox from proc_frame back to original frame
+                scale_factor = max(h, w) / float(MAX_PROCESS_DIM) if max(h, w) > MAX_PROCESS_DIM else 1.0
+
+                # Process detections: extract embeddings and match with DB only on processed frames
+                if should_process:
+                    # Clear cache for new detections
+                    cached_match_results = {}
+                    for detection in detections:
+                        x1, y1, x2, y2 = detection.bbox
+                        # Scale bbox coordinates from proc_frame to original frame
+                        if scale_factor != 1.0:
+                            x1, y1, x2, y2 = int(x1 * scale_factor), int(y1 * scale_factor), int(x2 * scale_factor), int(y2 * scale_factor)
+
+                        # 3. Extract Embedding
+                        embedding_result = None
+                        if self.use_composite:
+                            # Composite: Align face and use specialized recognizer
+                            if detection.landmarks is not None and len(detection.landmarks) >= 5:
+                                # CRITICAL: detection.landmarks are in proc_frame coordinates
+                                # align_face must use proc_frame with landmarks from proc_frame
+                                aligned_face = align_face(proc_frame, detection.landmarks)
+                                if aligned_face is not None:
+                                    # Extract embedding from aligned face
+                                    embedding_result = self.recognizer.extract_embedding(
+                                        aligned_face, detection
+                                    )
+                                else:
+                                    logger.debug(f"Face alignment failed for detection at {detection.bbox}")
+                            else:
+                                logger.debug(f"No landmarks for detection at {detection.bbox}")
+                        else:
+                            # Legacy: Use single model (with caching)
+                            embedding_result = self.model.extract_embedding(
+                                frame, detection, frame_id=frame_count
+                            )
+
+                        # 4. Match with Database
+                        match_text = "UNKNOWN"
+                        match_color = self.COLOR_UNKNOWN
+
+                        if embedding_result and self.db.list_identities():
+                            match = self.db.find_match(
+                                embedding_result.embedding,
+                                threshold=self.similarity_threshold,
+                                model_fingerprint=embedding_result.model_fingerprint,
+                            )
+                            if match:
+                                name, score = match
+                                match_text = f"{name} ({score:.3f})"
+                                match_color = self.COLOR_MATCH
+
+                        # Cache the match result
+                        bbox_key = (x1, y1, x2, y2)
+                        cached_match_results[bbox_key] = (match_text, match_color)
+
+                # Draw detections using cached match results
+                for idx, detection in enumerate(detections):
+                    x1, y1, x2, y2 = detection.bbox
+                    # Scale bbox coordinates from proc_frame to original frame
+                    if scale_factor != 1.0:
+                        x1, y1, x2, y2 = int(x1 * scale_factor), int(y1 * scale_factor), int(x2 * scale_factor), int(y2 * scale_factor)
+
+                    # Get cached match results (default if not found)
+                    bbox_key = (x1, y1, x2, y2)
+                    match_text, match_color = cached_match_results.get(bbox_key, ("UNKNOWN", self.COLOR_UNKNOWN))
 
                     # 5. Draw bounding box (color based on liveness and match)
                     bbox_color = match_color if is_alive else self.COLOR_DEAD

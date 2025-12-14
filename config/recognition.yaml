@@ -9,7 +9,7 @@ recognition:
 
   # Use composite architecture (two models)
   use_composite: true
-  detection_model: "insightface"     # Reliable face detector (WORKING)
+  detection_model: "scrfd_2.5g"     # Reliable face detector (WORKING)
   recognition_model: "arcface"       # Recognition-only model for embeddings
 
   # Legacy single model mode (kept for compatibility)

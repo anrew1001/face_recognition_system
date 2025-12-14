@@ -16,7 +16,7 @@ from pathlib import Path
 os.environ['FACE_DB_PASSPHRASE'] = '12345678'
 
 # Import and run main
-from main import main
+from main_simple import main
 
 if __name__ == "__main__":
     main()
