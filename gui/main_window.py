@@ -45,7 +45,6 @@ class MainWindow(ctk.CTk):
             screen: Объект экрана (наследник BaseScreen)
         """
         self.screens[name] = screen
-        # Не размещаем экран сразу - это будет сделано в show_screen()
 
     def show_screen(self, screen_name: str):
         """
